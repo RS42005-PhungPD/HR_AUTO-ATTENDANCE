@@ -1,7 +1,7 @@
 import json
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import schedule
 import requests
@@ -12,13 +12,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
-MANUAL_CHROMEDRIVER_PATH = r"C:\HR\AI\get_list_user(selenium for windows)\chromedriver-win64\chromedriver.exe"
-
-# Nếu Chrome cài ở vị trí khác, uncomment và điền đường dẫn:
-# MANUAL_CHROME_BINARY_PATH = r"C:\path\to\your\chrome.exe"
-MANUAL_CHROME_BINARY_PATH = None
-
-
+# ✅ Use a more stable approach for Windows
 try:
     from webdriver_manager.chrome import ChromeDriverManager
     from webdriver_manager.core.utils import ChromeType
@@ -33,12 +27,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def get_chrome_driver_service():
     """Get ChromeDriver service reliably"""
-    
-    # ✅ Ưu tiên sử dụng đường dẫn thủ công nếu được cấu hình
-    if MANUAL_CHROMEDRIVER_PATH and os.path.exists(MANUAL_CHROMEDRIVER_PATH):
-        print(f"✅ Using manual ChromeDriver path: {MANUAL_CHROMEDRIVER_PATH}")
-        return Service(MANUAL_CHROMEDRIVER_PATH)
-    
     if WEBDRIVER_MANAGER_AVAILABLE:
         try:
             print("🔄 Downloading ChromeDriver...")
@@ -62,47 +50,9 @@ def get_chrome_driver_service():
                 return Service()
             except Exception as e2:
                 print(f"❌ Selenium Manager failed: {e2}")
-                print("💡 Hướng dẫn tải ChromeDriver thủ công:")
-                print("1. Tải ChromeDriver từ: https://chromedriver.chromium.org/")
-                print("2. Giải nén và đặt đường dẫn vào MANUAL_CHROMEDRIVER_PATH")
-                print("3. Ví dụ: MANUAL_CHROMEDRIVER_PATH = r'C:\\chromedriver\\chromedriver.exe'")
                 raise RuntimeError("Cannot setup ChromeDriver. Please install manually.")
     else:
-        print("💡 Hướng dẫn tải ChromeDriver thủ công:")
-        print("1. Tải ChromeDriver từ: https://chromedriver.chromium.org/")
-        print("2. Giải nén và đặt đường dẫn vào MANUAL_CHROMEDRIVER_PATH")
-        print("3. Ví dụ: MANUAL_CHROMEDRIVER_PATH = r'C:\\chromedriver\\chromedriver.exe'")
         return Service()
-
-
-def get_chrome_binary_path():
-    """Detect Chrome installation path on Windows"""
-    import platform
-    
-    # Ưu tiên sử dụng đường dẫn thủ công nếu được cấu hình
-    if MANUAL_CHROME_BINARY_PATH and os.path.exists(MANUAL_CHROME_BINARY_PATH):
-        print(f"✅ Using manual Chrome binary path: {MANUAL_CHROME_BINARY_PATH}")
-        return MANUAL_CHROME_BINARY_PATH
-    
-    if platform.system() != "Windows":
-        return None
-    
-    # Common Chrome installation paths on Windows
-    chrome_paths = [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        r"C:\Users\{}\AppData\Local\Google\Chrome\Application\chrome.exe".format(os.environ.get('USERNAME', '')),
-        r"C:\Program Files\Google\Chrome Beta\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome Beta\Application\chrome.exe",
-    ]
-    
-    for path in chrome_paths:
-        if os.path.exists(path):
-            print(f"✅ Found Chrome at: {path}")
-            return path
-    
-    print("❌ Chrome not found in common installation paths")
-    return None
 
 
 class SeleniumLogin:
@@ -110,20 +60,11 @@ class SeleniumLogin:
         try:
             service = get_chrome_driver_service()
             opts = webdriver.ChromeOptions()
-            
-            # Detect Chrome binary path
-            chrome_binary = get_chrome_binary_path()
-            if chrome_binary:
-                opts.binary_location = chrome_binary
-            
             opts.add_argument('--headless')
             opts.add_argument('--disable-gpu')
             opts.add_argument('--no-sandbox')
             opts.add_argument('--ignore-certificate-errors')
             opts.add_argument('--disable-dev-shm-usage')
-            opts.add_argument('--disable-blink-features=AutomationControlled')
-            opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-            opts.add_experimental_option('useAutomationExtension', False)
 
             self.driver = webdriver.Chrome(service=service, options=opts)
             self.base_url = base_url
@@ -134,11 +75,9 @@ class SeleniumLogin:
         except Exception as e:
             print(f"❌ Failed to initialize ChromeDriver: {e}")
             print("💡 Solutions:")
-            print("1. Install Google Chrome from: https://www.google.com/chrome/")
-            print("2. Update Chrome browser to latest version")
-            print("3. Run: pip install --upgrade selenium webdriver-manager")
-            print("4. Check if Chrome is installed in a custom location")
-            print("5. Try running without headless mode (remove --headless)")
+            print("1. Update Chrome browser to latest version")
+            print("2. Run: pip install --upgrade selenium webdriver-manager")
+            print("3. Try manual ChromeDriver installation")
             raise
 
     def login(self):
@@ -223,47 +162,55 @@ class TransactionService:
         }
 
     @staticmethod
-    def load_last_date():
-        """Load last punch date from JSON file"""
+    def load_last_punch_time():
+        """Load last punch time from JSON file"""
         try:
             with open('last_punch_time.json', 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return data.get('last_date', '2025-01-01')
+                return json.load(f)
         except:
-            return '2000-01-01'
+            return {"att_date": "01-01-2000", "punch_time": "00:00", "emp_code": ""}
 
     @staticmethod
-    def save_last_date(date_str):
-        """Save the most recent date to JSON"""
-        data = {"last_date": date_str}
+    def save_last_punch_time(att_date, punch_time, emp_code):
+        """Save the most recent punch time to JSON"""
+        data = {"att_date": att_date, "punch_time": punch_time, "emp_code": emp_code}
         with open('last_punch_time.json', 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
-        print(f"\nUpdated last processed date: {date_str}")
+        print(f"Updated last punch time: {att_date} {punch_time} - {emp_code}")
 
     def process_new_records(self, data):
         """Process and filter new records"""
-        last_date = self.load_last_date()
-        print(f"Last processed date: {last_date}")
+        last_punch = self.load_last_punch_time()
+        print(
+            f"Last punch time: {last_punch['att_date']} {last_punch['punch_time']} - {last_punch.get('emp_code', '')}")
 
         new_records = []
-        latest_date = None
+        latest_datetime = None
+        latest_record = None
 
         for record in data['data']:
-            att_date = record['att_date']
+            record_datetime = datetime.strptime(f"{record['att_date']} {record['punch_time']}", "%d-%m-%Y %H:%M")
 
-            # compare day (string comparison works for YYYY-MM-DD format)
-            if att_date >= last_date:
-                # add record if clock_in is not None
-                if record.get('clock_in') is not None:
-                    new_records.append(record)
+            last_punch_time = "00:00" if record['att_date'] != last_punch['att_date'] else last_punch['punch_time']
+            last_punch_datetime = datetime.strptime(f"{record['att_date']} {last_punch_time}", "%d-%m-%Y %H:%M")
 
-                if latest_date is None or att_date > latest_date:
-                    latest_date = att_date
+            if record_datetime >= last_punch_datetime:
+                if (record['emp_code'] == last_punch.get('emp_code', '') and
+                        record_datetime == datetime.strptime(f"{last_punch['att_date']} {last_punch['punch_time']}",
+                                                             "%d-%m-%Y %H:%M")):
+                    print(f"Skipping duplicate: {record['emp_code']} - {record['att_date']} {record['punch_time']}")
+                    continue
 
-        # self.call_api(new_records)
+                new_records.append(record)
 
-        if latest_date:
-            self.save_last_date(latest_date)
+                if latest_datetime is None or record_datetime > latest_datetime:
+                    latest_datetime = record_datetime
+                    latest_record = record
+
+        self.call_api(new_records)
+
+        if latest_record:
+            self.save_last_punch_time(latest_record['att_date'], latest_record['punch_time'], latest_record['emp_code'])
 
         self.print_result(new_records)
 
@@ -271,29 +218,19 @@ class TransactionService:
     def call_api(new_records):
         url = "http://171.244.133.113:3293/api/cham_cong_van_tay_v2/"
         headers = {'Content-Type': 'application/json'}
-        device_name = 'HCM'
+        device_name = 'DPS2'
 
         for row in new_records:
             try:
                 att_date = row['att_date']
-                clock_in = row['clock_in']
-                clock_out = row['clock_out']
-
-                timestamp_clockin = datetime.strptime(f"{att_date} {clock_in}", "%Y-%m-%d %H:%M").strftime(
+                punch_time = row['punch_time']
+                timestamp = datetime.strptime(f"{att_date} {punch_time}", "%d-%m-%Y %H:%M").strftime(
                     "%Y-%m-%d %H:%M:%S")
-                timestamp_clockout = datetime.strptime(f"{att_date} {clock_out}", "%Y-%m-%d %H:%M").strftime(
-                    "%Y-%m-%d %H:%M:%S")
-                payload_in = {'msnv': row['emp_code'], 'kihieumay': device_name, 'timestamp': timestamp_clockin}
-                payload_out = {'msnv': row['emp_code'], 'kihieumay': device_name, 'timestamp': timestamp_clockout}
+                payload = {'msnv': row['emp_code'], 'kihieumay': device_name, 'timestamp': timestamp}
 
-                res_in = requests.post(url, headers=headers, json=payload_in)
-                res_out = requests.post(url, headers=headers, json=payload_out)
-                if res_in.status_code != 200:
-                    print(f"Error {res_in.status_code}: {res_in.text}")
-                    break
-
-                if res_out.status_code != 200:
-                    print(f"Error {res_out.status_code}: {res_out.text}")
+                res = requests.post(url, headers=headers, json=payload)
+                if res.status_code != 200:
+                    print(f"Error {res.status_code}: {res.text}")
                     break
             except Exception as e:
                 print(f"Exception on row {row['id']}: {e}")
@@ -301,19 +238,17 @@ class TransactionService:
 
     @staticmethod
     def print_result(new_records):
-        print(f"\nFound {len(new_records)} new records:")
+        print(f"Found {len(new_records)} new records:")
         for i, record in enumerate(new_records, 1):
-            clock_in = record.get('clock_in') or 'None'
-            clock_out = record.get('clock_out') or 'None'
-            print(f"{i}. {record['emp_code']} - {record['att_date']} (IN: {clock_in}, OUT: {clock_out})")
+            print(
+                f"{i}. {record['first_name']} ({record['emp_code']}) - {record['att_date']} {record['punch_time']} - {record['punch_state']}")
 
 
 def fetch_and_process(service: TransactionService, login_by_selenium: SeleniumLogin):
     now = datetime.now()
     print(f"Running task at {now:%Y-%m-%d %H:%M:%S}")
-    today = datetime.today()
-    start = today - timedelta(days=today.weekday())
-    end = start + timedelta(days=6)
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = now.replace(hour=23, minute=59, second=59)
     params = {
         "page": 1,
         "page_size": 100,
@@ -332,7 +267,7 @@ def fetch_and_process(service: TransactionService, login_by_selenium: SeleniumLo
         print(f"Using cookies: {list(cookies.keys())}")
 
         response = requests.get(
-            "http://127.0.0.1:89/att/api/totalTimeCardReportV2/",
+            "http://127.0.0.1:81/att/api/transactionReport/",
             params=params,
             cookies=cookies,
             headers=headers,
@@ -354,9 +289,9 @@ def fetch_and_process(service: TransactionService, login_by_selenium: SeleniumLo
 
 
 if __name__ == '__main__':
-    LOGIN_URL = "http://127.0.0.1:89"
-    USERNAME = "admin"
-    PASSWORD = "rsC11122!"
+    LOGIN_URL = "http://127.0.0.1:81"
+    USERNAME = "RscDSP2"
+    PASSWORD = "RscIT@1207"
 
     login = SeleniumLogin(LOGIN_URL, USERNAME, PASSWORD)
     login.login()
