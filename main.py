@@ -18,7 +18,6 @@ MANUAL_CHROMEDRIVER_PATH = r"C:\HR\AI\get_list_user(selenium for windows)\chrome
 # MANUAL_CHROME_BINARY_PATH = r"C:\path\to\your\chrome.exe"
 MANUAL_CHROME_BINARY_PATH = None
 
-
 try:
     from webdriver_manager.chrome import ChromeDriverManager
     from webdriver_manager.core.utils import ChromeType
@@ -33,12 +32,12 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def get_chrome_driver_service():
     """Get ChromeDriver service reliably"""
-    
+
     # ✅ Ưu tiên sử dụng đường dẫn thủ công nếu được cấu hình
     if MANUAL_CHROMEDRIVER_PATH and os.path.exists(MANUAL_CHROMEDRIVER_PATH):
         print(f"✅ Using manual ChromeDriver path: {MANUAL_CHROMEDRIVER_PATH}")
         return Service(MANUAL_CHROMEDRIVER_PATH)
-    
+
     if WEBDRIVER_MANAGER_AVAILABLE:
         try:
             print("🔄 Downloading ChromeDriver...")
@@ -78,15 +77,15 @@ def get_chrome_driver_service():
 def get_chrome_binary_path():
     """Detect Chrome installation path on Windows"""
     import platform
-    
+
     # Ưu tiên sử dụng đường dẫn thủ công nếu được cấu hình
     if MANUAL_CHROME_BINARY_PATH and os.path.exists(MANUAL_CHROME_BINARY_PATH):
         print(f"✅ Using manual Chrome binary path: {MANUAL_CHROME_BINARY_PATH}")
         return MANUAL_CHROME_BINARY_PATH
-    
+
     if platform.system() != "Windows":
         return None
-    
+
     # Common Chrome installation paths on Windows
     chrome_paths = [
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
@@ -95,12 +94,12 @@ def get_chrome_binary_path():
         r"C:\Program Files\Google\Chrome Beta\Application\chrome.exe",
         r"C:\Program Files (x86)\Google\Chrome Beta\Application\chrome.exe",
     ]
-    
+
     for path in chrome_paths:
         if os.path.exists(path):
             print(f"✅ Found Chrome at: {path}")
             return path
-    
+
     print("❌ Chrome not found in common installation paths")
     return None
 
@@ -110,12 +109,12 @@ class SeleniumLogin:
         try:
             service = get_chrome_driver_service()
             opts = webdriver.ChromeOptions()
-            
+
             # Detect Chrome binary path
             chrome_binary = get_chrome_binary_path()
             if chrome_binary:
                 opts.binary_location = chrome_binary
-            
+
             opts.add_argument('--headless')
             opts.add_argument('--disable-gpu')
             opts.add_argument('--no-sandbox')
@@ -233,12 +232,29 @@ class TransactionService:
             return '2000-01-01'
 
     @staticmethod
+    def load_last_record():
+        """Load last record date from JSON file"""
+        try:
+            with open('last_records.json', 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get('data', '')
+        except:
+            return ''
+
+    @staticmethod
     def save_last_date(date_str):
         """Save the most recent date to JSON"""
         data = {"last_date": date_str}
         with open('last_punch_time.json', 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
         print(f"\nUpdated last processed date: {date_str}")
+
+    @staticmethod
+    def save_last_record(records):
+        data = {"data": records}
+        with open('last_records.json', 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        print(f"\nUpdated last records.")
 
     def process_new_records(self, data):
         """Process and filter new records"""
@@ -260,12 +276,25 @@ class TransactionService:
                 if latest_date is None or att_date > latest_date:
                     latest_date = att_date
 
-        # self.call_api(new_records)
+            # check vs file data
+
+        #check old record and current record
+        if self.check_old_vs_current_records(new_records):
+            print("Not new records.")
+            return None
+
+        self.call_api(new_records)
 
         if latest_date:
             self.save_last_date(latest_date)
-
+        self.save_last_record(new_records)
         self.print_result(new_records)
+
+    def check_old_vs_current_records(self, new_records):
+        last_records = self.load_last_record()
+        if not last_records:
+            return False
+        return new_records == last_records
 
     @staticmethod
     def call_api(new_records):
