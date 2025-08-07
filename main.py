@@ -1,7 +1,7 @@
 import json
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import schedule
 import requests
@@ -188,26 +188,34 @@ class TransactionService:
         latest_datetime = None
         latest_record = None
 
+        # Tạo datetime thực tế của last_punch để so sánh
+        last_punch_datetime = datetime.strptime(f"{last_punch['att_date']} {last_punch['punch_time']}",
+                                                "%d-%m-%Y %H:%M")
+
         for record in data['data']:
             record_datetime = datetime.strptime(f"{record['att_date']} {record['punch_time']}", "%d-%m-%Y %H:%M")
 
-            last_punch_time = "00:00" if record['att_date'] != last_punch['att_date'] else last_punch['punch_time']
-            last_punch_datetime = datetime.strptime(f"{record['att_date']} {last_punch_time}", "%d-%m-%Y %H:%M")
-
-            if record_datetime >= last_punch_datetime:
-                if (record['emp_code'] == last_punch.get('emp_code', '') and
-                        record_datetime == datetime.strptime(f"{last_punch['att_date']} {last_punch['punch_time']}",
-                                                             "%d-%m-%Y %H:%M")):
-                    print(f"Skipping duplicate: {record['emp_code']} - {record['att_date']} {record['punch_time']}")
-                    continue
-
+            # So sánh trực tiếp với datetime thực tế của last_punch
+            if record_datetime > last_punch_datetime:
                 new_records.append(record)
 
                 if latest_datetime is None or record_datetime > latest_datetime:
                     latest_datetime = record_datetime
                     latest_record = record
+            elif record_datetime == last_punch_datetime:
+                # Kiểm tra duplicate cho cùng datetime
+                if record['emp_code'] == last_punch.get('emp_code', ''):
+                    print(f"Skipping duplicate: {record['emp_code']} - {record['att_date']} {record['punch_time']}")
+                    continue
+                else:
+                    # Cùng thời gian nhưng khác nhân viên - vẫn là record mới
+                    new_records.append(record)
 
-        self.call_api(new_records)
+                    if latest_datetime is None or record_datetime > latest_datetime:
+                        latest_datetime = record_datetime
+                        latest_record = record
+
+        # call_api(new_records)
 
         if latest_record:
             self.save_last_punch_time(latest_record['att_date'], latest_record['punch_time'], latest_record['emp_code'])
@@ -247,7 +255,7 @@ class TransactionService:
 def fetch_and_process(service: TransactionService, login_by_selenium: SeleniumLogin):
     now = datetime.now()
     print(f"Running task at {now:%Y-%m-%d %H:%M:%S}")
-    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     end = now.replace(hour=23, minute=59, second=59)
     params = {
         "page": 1,
