@@ -215,7 +215,7 @@ class TransactionService:
                         latest_datetime = record_datetime
                         latest_record = record
 
-        # call_api(new_records)
+        self.call_api(new_records)
 
         if latest_record:
             self.save_last_punch_time(latest_record['att_date'], latest_record['punch_time'], latest_record['emp_code'])
