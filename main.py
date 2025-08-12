@@ -276,19 +276,17 @@ class TransactionService:
                 if latest_date is None or att_date > latest_date:
                     latest_date = att_date
 
-            # check vs file data
-
-        #check old record and current record
         if self.check_old_vs_current_records(new_records):
             print("Not new records.")
             return None
 
-        self.call_api(new_records)
+        success = self.call_api(new_records)
 
-        if latest_date:
+        if success and latest_date:
             self.save_last_date(latest_date)
-        self.save_last_record(new_records)
-        self.print_result(new_records)
+            self.save_last_record(new_records)
+            self.print_result(new_records)
+        return None
 
     def check_old_vs_current_records(self, new_records):
         last_records = self.load_last_record()
@@ -308,25 +306,23 @@ class TransactionService:
                 clock_in = row['clock_in']
                 clock_out = row['clock_out']
 
-                timestamp_clockin = datetime.strptime(f"{att_date} {clock_in}", "%Y-%m-%d %H:%M").strftime(
+                time_clock = clock_out if clock_out else clock_in
+                timestamp_clock = datetime.strptime(f"{att_date} {time_clock}", "%Y-%m-%d %H:%M").strftime(
                     "%Y-%m-%d %H:%M:%S")
-                timestamp_clockout = datetime.strptime(f"{att_date} {clock_out}", "%Y-%m-%d %H:%M").strftime(
-                    "%Y-%m-%d %H:%M:%S")
-                payload_in = {'msnv': row['emp_code'], 'kihieumay': device_name, 'timestamp': timestamp_clockin}
-                payload_out = {'msnv': row['emp_code'], 'kihieumay': device_name, 'timestamp': timestamp_clockout}
+
+                payload_in = {'msnv': row['emp_code'], 'kihieumay': device_name, 'timestamp': timestamp_clock}
 
                 res_in = requests.post(url, headers=headers, json=payload_in)
-                res_out = requests.post(url, headers=headers, json=payload_out)
+                print("Call success", row['emp_code'])
                 if res_in.status_code != 200:
                     print(f"Error {res_in.status_code}: {res_in.text}")
-                    break
+                    return False
 
-                if res_out.status_code != 200:
-                    print(f"Error {res_out.status_code}: {res_out.text}")
-                    break
             except Exception as e:
-                print(f"Exception on row {row['id']}: {e}")
-                break
+                print(f"Exception on row {row.get('id')}: {e}")
+
+                return False
+        return True
 
     @staticmethod
     def print_result(new_records):
@@ -340,12 +336,12 @@ class TransactionService:
 def fetch_and_process(service: TransactionService, login_by_selenium: SeleniumLogin):
     now = datetime.now()
     print(f"Running task at {now:%Y-%m-%d %H:%M:%S}")
-    today = datetime.today()
-    start = today - timedelta(days=today.weekday())
-    end = start + timedelta(days=6)
+    today = datetime.now()
+    start = today - timedelta(days=6)
+    end = today
     params = {
         "page": 1,
-        "page_size": 100,
+        "page_size": 200,
         "start_date": start.strftime('%Y-%m-%d'),
         "end_date": end.strftime('%Y-%m-%d'),
         "departments": 1,
@@ -353,7 +349,6 @@ def fetch_and_process(service: TransactionService, login_by_selenium: SeleniumLo
         "groups": -1,
         "employees": -1,
     }
-
     try:
         cookies = service.get_session_cookies()
         headers = service.get_session_headers()
