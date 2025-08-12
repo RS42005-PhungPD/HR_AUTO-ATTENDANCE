@@ -166,10 +166,10 @@ class SeleniumLogin:
 
 
 class TransactionService:
-    def __init__(self, driver, base_url):
+    def __init__(self, driver, base_url, last_punch_time):
         self.driver = driver
         self.base_url = base_url
-        self.last_id_file = 'last_user_id.txt'
+        self.last_punch_time = last_punch_time
 
     def get_session_cookies(self):
         """Get cookies from Selenium driver to use in requests"""
@@ -221,78 +221,76 @@ class TransactionService:
             'Content-Type': 'application/json',
         }
 
-    @staticmethod
-    def load_last_date():
-        """Load last punch date from JSON file"""
+    def load_last_punch_time(self):
+        """Load last punch time from JSON file"""
         try:
-            with open('last_punch_time.json', 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return data.get('last_date', '2025-01-01')
+            with open(self.last_punch_time, 'r', encoding='utf-8') as f:
+                return json.load(f)
         except:
-            return '2000-01-01'
+            return {"att_date": "01-01-2000", "punch_time": "00:00", "emp_code": ""}
 
-    @staticmethod
-    def load_last_record():
-        """Load last record date from JSON file"""
-        try:
-            with open('last_records.json', 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return data.get('data', '')
-        except:
-            return ''
+    def save_last_punch_time(self, att_date, punch_time, emp_code):
+        """Save the most recent punch time to JSON (minus 2 hours, with logging)"""
+        # Parse format dd-MM-YYYY
+        original_dt = datetime.strptime(f"{att_date} {punch_time}", "%d-%m-%Y %H:%M")
+        adjusted_dt = original_dt - timedelta(hours=2)
 
-    @staticmethod
-    def save_last_date(date_str):
-        """Save the most recent date to JSON"""
-        data = {"last_date": date_str}
-        with open('last_punch_time.json', 'w', encoding='utf-8') as f:
+        print(f"[Original Time] {original_dt.strftime('%d-%m-%Y %H:%M')} - {emp_code}")
+        print(f"[Adjusted Time] {adjusted_dt.strftime('%d-%m-%Y %H:%M')} - {emp_code}")
+
+        data = {
+            "att_date": adjusted_dt.strftime("%d-%m-%Y"),
+            "punch_time": adjusted_dt.strftime("%H:%M"),
+            "emp_code": emp_code
+        }
+        with open(self.last_punch_time, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
-        print(f"\nUpdated last processed date: {date_str}")
 
-    @staticmethod
-    def save_last_record(records):
-        data = {"data": records}
-        with open('last_records.json', 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-        print(f"\nUpdated last records.")
+        print(f"Updated last punch time in file: {data['att_date']} {data['punch_time']} - {emp_code}")
 
     def process_new_records(self, data):
         """Process and filter new records"""
-        last_date = self.load_last_date()
-        print(f"Last processed date: {last_date}")
+        last_punch = self.load_last_punch_time()
+        print(
+            f"Last punch time: {last_punch['att_date']} {last_punch['punch_time']} - {last_punch.get('emp_code', '')}")
 
         new_records = []
-        latest_date = None
+        latest_datetime = None
+        latest_record = None
+
+        # Tạo datetime thực tế của last_punch để so sánh
+        last_punch_datetime = datetime.strptime(f"{last_punch['att_date']} {last_punch['punch_time']}",
+                                                "%d-%m-%Y %H:%M")
 
         for record in data['data']:
-            att_date = record['att_date']
+            record_datetime = datetime.strptime(f"{record['att_date']} {record['punch_time']}", "%d-%m-%Y %H:%M")
 
-            # compare day (string comparison works for YYYY-MM-DD format)
-            if att_date >= last_date:
-                # add record if clock_in is not None
-                if record.get('clock_in') is not None:
+            # So sánh trực tiếp với datetime thực tế của last_punch
+            if record_datetime > last_punch_datetime:
+                new_records.append(record)
+
+                if latest_datetime is None or record_datetime > latest_datetime:
+                    latest_datetime = record_datetime
+                    latest_record = record
+            elif record_datetime == last_punch_datetime:
+                # Kiểm tra duplicate cho cùng datetime
+                if record['emp_code'] == last_punch.get('emp_code', ''):
+                    print(f"Skipping duplicate: {record['emp_code']} - {record['att_date']}")
+                    continue
+                else:
+                    # Cùng thời gian nhưng khác nhân viên - vẫn là record mới
                     new_records.append(record)
 
-                if latest_date is None or att_date > latest_date:
-                    latest_date = att_date
-
-        if self.check_old_vs_current_records(new_records):
-            print("Not new records.")
-            return None
+                    if latest_datetime is None or record_datetime > latest_datetime:
+                        latest_datetime = record_datetime
+                        latest_record = record
 
         success = self.call_api(new_records)
 
-        if success and latest_date:
-            self.save_last_date(latest_date)
-            self.save_last_record(new_records)
-            self.print_result(new_records)
-        return None
+        if success and latest_record:
+            self.save_last_punch_time(latest_record['att_date'], latest_record['punch_time'], latest_record['emp_code'])
 
-    def check_old_vs_current_records(self, new_records):
-        last_records = self.load_last_record()
-        if not last_records:
-            return False
-        return new_records == last_records
+        self.print_result(new_records)
 
     @staticmethod
     def call_api(new_records):
@@ -303,45 +301,37 @@ class TransactionService:
         for row in new_records:
             try:
                 att_date = row['att_date']
-                clock_in = row['clock_in']
-                clock_out = row['clock_out']
-
-                time_clock = clock_out if clock_out else clock_in
-                timestamp_clock = datetime.strptime(f"{att_date} {time_clock}", "%Y-%m-%d %H:%M").strftime(
+                punch_time = row['punch_time']
+                timestamp = datetime.strptime(f"{att_date} {punch_time}", "%d-%m-%Y %H:%M").strftime(
                     "%Y-%m-%d %H:%M:%S")
+                payload = {'msnv': row['emp_code'], 'kihieumay': device_name, 'timestamp': timestamp}
 
-                payload_in = {'msnv': row['emp_code'], 'kihieumay': device_name, 'timestamp': timestamp_clock}
-
-                res_in = requests.post(url, headers=headers, json=payload_in)
+                res = requests.post(url, headers=headers, json=payload)
                 print("Call success", row['emp_code'])
-                if res_in.status_code != 200:
-                    print(f"Error {res_in.status_code}: {res_in.text}")
+                if res.status_code != 200:
+                    print(f"Error {res.status_code}: {res.text}")
                     return False
-
             except Exception as e:
-                print(f"Exception on row {row.get('id')}: {e}")
-
+                print(f"Exception on row {row['id']}: {e}")
                 return False
         return True
 
     @staticmethod
     def print_result(new_records):
-        print(f"\nFound {len(new_records)} new records:")
+        print(f"Found {len(new_records)} new records:")
         for i, record in enumerate(new_records, 1):
-            clock_in = record.get('clock_in') or 'None'
-            clock_out = record.get('clock_out') or 'None'
-            print(f"{i}. {record['emp_code']} - {record['att_date']} (IN: {clock_in}, OUT: {clock_out})")
+            print(
+                f"{i}. {record['first_name']} ({record['emp_code']}) - {record['att_date']} {record['punch_time']}")
 
 
 def fetch_and_process(service: TransactionService, login_by_selenium: SeleniumLogin):
     now = datetime.now()
     print(f"Running task at {now:%Y-%m-%d %H:%M:%S}")
-    today = datetime.now()
-    start = today - timedelta(days=6)
-    end = today
+    start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    end = now.replace(hour=23, minute=59, second=59)
     params = {
         "page": 1,
-        "page_size": 200,
+        "page_size": 500,
         "start_date": start.strftime('%Y-%m-%d'),
         "end_date": end.strftime('%Y-%m-%d'),
         "departments": 1,
@@ -349,6 +339,7 @@ def fetch_and_process(service: TransactionService, login_by_selenium: SeleniumLo
         "groups": -1,
         "employees": -1,
     }
+
     try:
         cookies = service.get_session_cookies()
         headers = service.get_session_headers()
@@ -356,7 +347,7 @@ def fetch_and_process(service: TransactionService, login_by_selenium: SeleniumLo
         print(f"Using cookies: {list(cookies.keys())}")
 
         response = requests.get(
-            "http://127.0.0.1:89/att/api/totalTimeCardReportV2/",
+            "http://127.0.0.1:89/att/api/transactionReport/",
             params=params,
             cookies=cookies,
             headers=headers,
@@ -381,11 +372,12 @@ if __name__ == '__main__':
     LOGIN_URL = "http://127.0.0.1:89"
     USERNAME = "admin"
     PASSWORD = "rsC11122!"
+    LAST_PUNCH_FILE = r"C:\HR\AI_HCM\last_punch_time.json"
 
     login = SeleniumLogin(LOGIN_URL, USERNAME, PASSWORD)
     login.login()
     time.sleep(5)
-    svc = TransactionService(login.driver, LOGIN_URL)
+    svc = TransactionService(login.driver, LOGIN_URL, LAST_PUNCH_FILE)
 
     fetch_and_process(svc, login)
     schedule.every(5).minutes.do(fetch_and_process, svc, login)
