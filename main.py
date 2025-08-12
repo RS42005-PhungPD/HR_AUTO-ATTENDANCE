@@ -106,10 +106,10 @@ class SeleniumLogin:
 
 
 class TransactionService:
-    def __init__(self, driver, base_url):
+    def __init__(self, driver, base_url, last_punch_time):
         self.driver = driver
         self.base_url = base_url
-        self.last_id_file = 'last_user_id.txt'
+        self.last_punch_time = last_punch_time
 
     def get_session_cookies(self):
         """Get cookies from Selenium driver to use in requests"""
@@ -161,22 +161,32 @@ class TransactionService:
             'Content-Type': 'application/json',
         }
 
-    @staticmethod
-    def load_last_punch_time():
+    def load_last_punch_time(self):
         """Load last punch time from JSON file"""
         try:
-            with open('last_punch_time.json', 'r', encoding='utf-8') as f:
+            with open(self.last_punch_time, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except:
             return {"att_date": "01-01-2000", "punch_time": "00:00", "emp_code": ""}
 
-    @staticmethod
-    def save_last_punch_time(att_date, punch_time, emp_code):
-        """Save the most recent punch time to JSON"""
-        data = {"att_date": att_date, "punch_time": punch_time, "emp_code": emp_code}
-        with open('last_punch_time.json', 'w', encoding='utf-8') as f:
+    def save_last_punch_time(self, att_date, punch_time, emp_code):
+        """Save the most recent punch time to JSON (minus 2 hours, with logging)"""
+        # Parse format dd-MM-YYYY
+        original_dt = datetime.strptime(f"{att_date} {punch_time}", "%d-%m-%Y %H:%M")
+        adjusted_dt = original_dt - timedelta(hours=2)
+
+        print(f"[Original Time] {original_dt.strftime('%d-%m-%Y %H:%M')} - {emp_code}")
+        print(f"[Adjusted Time] {adjusted_dt.strftime('%d-%m-%Y %H:%M')} - {emp_code}")
+
+        data = {
+            "att_date": adjusted_dt.strftime("%d-%m-%Y"),
+            "punch_time": adjusted_dt.strftime("%H:%M"),
+            "emp_code": emp_code
+        }
+        with open(self.last_punch_time, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
-        print(f"Updated last punch time: {att_date} {punch_time} - {emp_code}")
+
+        print(f"Updated last punch time in file: {data['att_date']} {data['punch_time']} - {emp_code}")
 
     def process_new_records(self, data):
         """Process and filter new records"""
@@ -215,9 +225,9 @@ class TransactionService:
                         latest_datetime = record_datetime
                         latest_record = record
 
-        self.call_api(new_records)
+        success = self.call_api(new_records)
 
-        if latest_record:
+        if success and latest_record:
             self.save_last_punch_time(latest_record['att_date'], latest_record['punch_time'], latest_record['emp_code'])
 
         self.print_result(new_records)
@@ -237,12 +247,14 @@ class TransactionService:
                 payload = {'msnv': row['emp_code'], 'kihieumay': device_name, 'timestamp': timestamp}
 
                 res = requests.post(url, headers=headers, json=payload)
+                print("Call success", row['emp_code'])
                 if res.status_code != 200:
                     print(f"Error {res.status_code}: {res.text}")
-                    break
+                    return False
             except Exception as e:
                 print(f"Exception on row {row['id']}: {e}")
-                break
+                return False
+        return True
 
     @staticmethod
     def print_result(new_records):
@@ -259,7 +271,7 @@ def fetch_and_process(service: TransactionService, login_by_selenium: SeleniumLo
     end = now.replace(hour=23, minute=59, second=59)
     params = {
         "page": 1,
-        "page_size": 100,
+        "page_size": 500,
         "start_date": start.strftime('%Y-%m-%d'),
         "end_date": end.strftime('%Y-%m-%d'),
         "departments": 1,
@@ -300,11 +312,12 @@ if __name__ == '__main__':
     LOGIN_URL = "http://127.0.0.1:81"
     USERNAME = "RscDSP2"
     PASSWORD = "RscIT@1207"
+    LAST_PUNCH_FILE = r"C:\HR_ATT\DPS2_ATT\last_punch_time.json"
 
     login = SeleniumLogin(LOGIN_URL, USERNAME, PASSWORD)
     login.login()
     time.sleep(5)
-    svc = TransactionService(login.driver, LOGIN_URL)
+    svc = TransactionService(login.driver, LOGIN_URL, LAST_PUNCH_FILE)
 
     fetch_and_process(svc, login)
     schedule.every(5).minutes.do(fetch_and_process, svc, login)
