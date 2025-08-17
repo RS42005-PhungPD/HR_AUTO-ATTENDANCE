@@ -264,48 +264,66 @@ class TransactionService:
                 f"{i}. {record['first_name']} ({record['emp_code']}) - {record['att_date']} {record['punch_time']} - {record['punch_state']}")
 
 
-def fetch_and_process(service: TransactionService, login_by_selenium: SeleniumLogin):
+def conditional_work(last_info, default_last):
+    today = datetime.now().date()
+    if last_info["att_date"] == default_last["att_date"]:
+        start = today - timedelta(days=6)
+    else:
+        last_date = datetime.strptime(last_info["att_date"], "%d-%m-%Y").date()
+        start = max(last_date, today - timedelta(days=6))
+    return today, start
+
+def fetch_and_process(service: TransactionService, login_by_selenium: SeleniumLogin, default_last):
+    errors_count = 0
+    MAX_ERRORS = 3
     now = datetime.now()
     print(f"Running task at {now:%Y-%m-%d %H:%M:%S}")
-    start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    end = now.replace(hour=23, minute=59, second=59)
-    params = {
-        "page": 1,
-        "page_size": 500,
-        "start_date": start.strftime('%Y-%m-%d'),
-        "end_date": end.strftime('%Y-%m-%d'),
-        "departments": 1,
-        "areas": -1,
-        "groups": -1,
-        "employees": -1,
-    }
+    last_info = service.load_last_punch_time()
+    today, start = conditional_work(last_info, default_last)
+    while start <= today:
+        params = {
+            "page": 1,
+            "page_size": 500,
+            "start_date": start.strftime("%Y-%m-%d"),
+            "end_date": start.strftime("%Y-%m-%d"),
+            "departments": 1,
+            "areas": -1,
+            "groups": -1,
+            "employees": -1,
+        }
 
-    try:
-        cookies = service.get_session_cookies()
-        headers = service.get_session_headers()
+        try:
+            cookies = service.get_session_cookies()
+            headers = service.get_session_headers()
 
-        print(f"Using cookies: {list(cookies.keys())}")
+            print(f"Using cookies: {list(cookies.keys())}")
+            print(params)
+            response = requests.get(
+                "http://127.0.0.1:81/att/api/transactionReport/",
+                params=params,
+                cookies=cookies,
+                headers=headers,
+                verify=False
+            )
+            response.raise_for_status()
+            data = response.json()
+            service.process_new_records(data)
+            errors_count = 0
+            start += timedelta(days=1)
 
-        response = requests.get(
-            "http://127.0.0.1:81/att/api/transactionReport/",
-            params=params,
-            cookies=cookies,
-            headers=headers,
-            verify=False
-        )
-        response.raise_for_status()
-        data = response.json()
-        service.process_new_records(data)
-
-    except requests.RequestException as e:
-        print("Error when calling API:", e)
-        if hasattr(e, 'response') and e.response is not None:
-            print(f"Response status: {e.response.status_code}")
-            print(f"Response text: {e.response.text}")
-        service.driver.refresh()
-        print("🔄 Re-logging in...")
-        login_by_selenium.login()
-        print("✅ Re-login successful")
+        except requests.RequestException as e:
+            print("Error when calling API:", e)
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"Response status: {e.response.status_code}")
+                print(f"Response text: {e.response.text}")
+            service.driver.refresh()
+            print("🔄 Re-logging in...")
+            login_by_selenium.login()
+            print("✅ Re-login successful")
+            errors_count += 1
+            if errors_count >= MAX_ERRORS:
+                print(f"Exceeded {MAX_ERRORS} consecutive errors. Stopping loop.")
+                break
 
 
 if __name__ == '__main__':
@@ -313,14 +331,15 @@ if __name__ == '__main__':
     USERNAME = "RscDSP2"
     PASSWORD = "RscIT@1207"
     LAST_PUNCH_FILE = r"C:\HR_ATT\DPS2_ATT\last_punch_time.json"
+    DEFAULT_LAST = {"att_date": "01-01-2000", "punch_time": "00:00", "emp_code": ""}
 
     login = SeleniumLogin(LOGIN_URL, USERNAME, PASSWORD)
     login.login()
     time.sleep(5)
     svc = TransactionService(login.driver, LOGIN_URL, LAST_PUNCH_FILE)
 
-    fetch_and_process(svc, login)
-    schedule.every(5).minutes.do(fetch_and_process, svc, login)
+    fetch_and_process(svc, login, DEFAULT_LAST)
+    schedule.every(5).minutes.do(fetch_and_process, svc, login, DEFAULT_LAST)
 
     try:
         while True:
